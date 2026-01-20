@@ -218,8 +218,6 @@ struct Frame {	/* stack frame for awk function calls */
 
 #define	NARGS	50	/* max args in a call */
 
-struct Frame *frame = nil;	/* base of stack frames; dynamically allocated */
-int	nframe = 0;		/* number of frames allocated */
 struct Frame *fp = nil;	/* frame pointer. bottom level unused */
 
 Cell *call(Node **a, int)	/* function call.  very kludgy and fragile */
@@ -227,87 +225,75 @@ Cell *call(Node **a, int)	/* function call.  very kludgy and fragile */
 	static Cell newcopycell = { OCELL, CCOPY, NUM|STR|DONTFREE, 0, EMPTY, 0.0 };
 	int i, ncall, ndef;
 	Node *x;
-	Cell *args[NARGS], *oargs[NARGS];	/* BUG: fixed size arrays */
+	Cell *args[NARGS], **oargs;
 	Cell *y, *z, *fcn;
+	struct Frame frame, *up;
 	char *s;
 
 	fcn = execute(a[0]);	/* the function itself */
 	s = fcn->nval;
 	if (!isfcn(fcn))
 		FATAL("calling undefined function %s", s);
-	if (frame == nil) {
-		fp = frame = (struct Frame *) calloc(nframe += 100, sizeof(struct Frame));
-		if (frame == nil)
-			FATAL("out of space for stack frames calling %s", s);
-	}
 	for (ncall = 0, x = a[1]; x != nil; x = x->nnext)	/* args in call */
 		ncall++;
 	ndef = (int) fcn->fval;			/* args in defn */
-	   dprint( ("calling %s, %d args (%d in defn), fp=%d\n", s, ncall, ndef, (int) (fp-frame)) );
-	if (ncall > ndef)
+	   dprint( ("calling %s, %d args (%d in defn)\n", s, ncall, ndef) );
+	if (ncall > ndef) {
 		WARNING("function %s called with %d args, uses only %d",
 			s, ncall, ndef);
-	if (ncall + ndef > NARGS)
-		FATAL("function %s has %d arguments, limit %d", s, ncall+ndef, NARGS);
-	for (i = 0, x = a[1]; x != nil; i++, x = x->nnext) {	/* get call args */
-		   dprint( ("evaluate args[%d], fp=%d:\n", i, (int) (fp-frame)) );
+		ncall = ndef;
+	}
+	if (ndef+ncall > NARGS)
+		FATAL("function %s has %d arguments, limit %d", s, ndef+ncall, NARGS);
+	oargs = args+ndef;
+	for (i = 0, x = a[1]; i < ncall && x != nil; i++, x = x->nnext) {	/* get call args */
+		   dprint( ("evaluate args[%d]:\n", i) );
 		y = execute(x);
-		oargs[i] = y;
 		   dprint( ("args[%d]: %s %f <%s>, t=%o\n",
 			   i, y->nval, y->fval, isarr(y) ? "(array)" : y->sval, y->tval) );
 		if (isfcn(y))
 			FATAL("can't use function %s as argument in %s", y->nval, s);
-		if (isarr(y))
+		if (isarr(y)) {
 			args[i] = y;	/* arrays by ref */
-		else
+			y = nil;
+		} else if (istemp(y)) {
+			y->csub = CCOPY;
+			args[i] = y;
+		} else
 			args[i] = copycell(y);
-			if (istemp(y))
-				tfree(y);
+		oargs[i] = y;	/* potential output arg for arrays */
 	}
 	for ( ; i < ndef; i++) {	/* add null args for ones not provided */
 		args[i] = gettemp();
 		*args[i] = newcopycell;
 	}
-	fp++;	/* now ok to up frame */
-	if (fp >= frame + nframe) {
-		int dfp = fp - frame;	/* old index */
-		frame = (struct Frame *)
-			realloc((char *) frame, (nframe += 100) * sizeof(struct Frame));
-		if (frame == nil)
-			FATAL("out of space for stack frames in %s", s);
-		fp = frame + dfp;
-	}
+	/* now ok to up frame */
+	up = fp;
+	fp = &frame;
 	fp->fcncell = fcn;
 	fp->args = args;
 	fp->nargs = ndef;	/* number defined with (excess are locals) */
 	fp->retval = gettemp();
 
-	dprint( ("start exec of %s, fp=%d\n", s, (int) (fp-frame)) );
+	dprint( ("start exec of %s\n", s) );
 	y = execute((Node *)(fcn->sval));	/* execute body */
-	dprint( ("finished exec of %s, fp=%d\n", s, (int) (fp-frame)) );
+	dprint( ("finished exec of %s\n", s) );
 
 	for (i = 0; i < ndef; i++) {
-		Cell *t = fp->args[i];
+		Cell *t = args[i];
 		if (isarr(t)) {
 			if (t->csub == CCOPY) {
 				if (i >= ncall) {
 					freesymtab(t);
-					t->csub = CTEMP;
-				if (istemp(t))
 					tfree(t);
-				} else {
+				} else if(oargs[i] != nil) {
 					oargs[i]->tval = t->tval;
 					oargs[i]->tval &= ~(STR|NUM|DONTFREE);
 					oargs[i]->sval = t->sval;
-					if (istemp(t))
-						tfree(t);
 				}
 			}
-		} else if (t != y) {	/* kludge to prevent freeing twice */
-			t->csub = CTEMP;
-			if (istemp(t))
-				tfree(t);
-		}
+		} else if (t != y)	/* kludge to prevent freeing twice */
+			tfree(t);
 	}
 	if (istemp(fcn))
 		tfree(fcn);
@@ -317,7 +303,7 @@ Cell *call(Node **a, int)	/* function call.  very kludgy and fragile */
 		tfree(y);		/* this can free twice! */
 	z = fp->retval;			/* return value */
 	   dprint( ("%s returns %g |%s| %o\n", s, getfval(z), getsval(z), z->tval) );
-	fp--;
+	fp = up;
 	return(z);
 }
 
@@ -328,7 +314,7 @@ Cell *copycell(Cell *x)	/* make a copy of a cell in a temp */
 	y = gettemp();
 	y->csub = CCOPY;	/* prevents freeing until call is over */
 	y->nval = x->nval;	/* BUG? */
-	y->sval = x->sval != nil && x->sval != EMPTY ? tostring(x->sval) : EMPTY;
+	y->sval = x->sval != nil && *x->sval ? tostring(x->sval) : EMPTY;
 	y->fval = x->fval;
 	y->tval = x->tval & ~(CON|FLD|REC|DONTFREE);	/* copy is not constant or field */
 	if (y->sval == EMPTY)
@@ -341,7 +327,7 @@ Cell *arg(Node **a, int n)	/* nth argument of a function */
 
 	n = ptoi(a[0]);	/* argument number, counting from 0 */
 	   dprint( ("arg(%d), fp->nargs=%d\n", n, fp->nargs) );
-	if (n+1 > fp->nargs)
+	if (n >= fp->nargs)
 		FATAL("argument #%d of function %s was not supplied",
 			n+1, fp->fcncell->nval);
 	return fp->args[n];
@@ -430,10 +416,8 @@ Cell *getline(Node **a, int n)	/* get next line from specific input */
 				tfree(x);
 		} else {			/* getline <file */
 			setsval(fldtab[0], buf);
-			if (is_number(fldtab[0]->sval)) {
-				fldtab[0]->fval = atof(fldtab[0]->sval);
+			if (to_number(fldtab[0]->sval, &fldtab[0]->fval, nil))
 				fldtab[0]->tval |= NUM;
-			}
 		}
 	} else {			/* bare getline; use current input */
 		if (a[0] == nil)	/* getline */
@@ -608,6 +592,7 @@ Cell *matchop(Node **a, int n)	/* ~ and match() */
 		i = pmatch(p, s, s);
 	else
 		i = match(p, s, s);
+	releasere(p);
 	if (istemp(x))
 		tfree(x);
 	if (n == MATCHFCN) {
@@ -737,9 +722,11 @@ Cell *indirect(Node **a, int)	/* $( a[0] ) */
 
 	x = execute(a[0]);
 	m = (int) getfval(x);
-	if (m == 0 && !is_number(s = getsval(x)))	/* suspicion! */
-		FATAL("illegal field $(%s), name \"%s\"", s, x->nval);
-		/* BUG: can x->nval ever be null??? */
+	if (m == 0) {
+		if (!to_number(s = getsval(x), &x->fval, nil))	/* suspicion! */
+			FATAL("illegal field $(%s), name \"%s\"", s, x->nval);
+			/* BUG: can x->nval ever be null??? */
+	}
 	if (istemp(x))
 		tfree(x);
 	x = fieldadr(m);
@@ -1264,6 +1251,7 @@ Cell *split(Node **a, int)	/* split(a[0], a[1], a[2]); a[3] is type */
 	Cell *x = 0, *y, *ap;
 	char *s, *ds, *t, *fs = 0;
 	char temp, num[50];
+	Awkfloat f;
 	int n, nb, sep, arg3type;
 
 	y = execute(a[0]);	/* source string */
@@ -1303,8 +1291,8 @@ Cell *split(Node **a, int)	/* split(a[0], a[1], a[2]); a[3] is type */
 				sprint(num, "%d", n);
 				temp = *patbeg;
 				*patbeg = '\0';
-				if (is_number(t))
-					setsymtab(num, t, atof(t), STR|NUM, (Array *) ap->sval);
+				if (to_number(t, &f, nil))
+					setsymtab(num, t, f, STR|NUM, (Array *) ap->sval);
 				else
 					setsymtab(num, t, 0.0, STR, (Array *) ap->sval);
 				*patbeg = temp;
@@ -1319,13 +1307,12 @@ Cell *split(Node **a, int)	/* split(a[0], a[1], a[2]); a[3] is type */
 		}
 		n++;
 		sprint(num, "%d", n);
-		if (is_number(t))
-			setsymtab(num, t, atof(t), STR|NUM, (Array *) ap->sval);
+		if (to_number(t, &f, nil))
+			setsymtab(num, t, f, STR|NUM, (Array *) ap->sval);
 		else
 			setsymtab(num, t, 0.0, STR, (Array *) ap->sval);
   spdone:
-		p = nil;
-		USED(p);
+  		releasere(p);
 	} else if (sep == ' ') {
 		for (n = 0; ; ) {
 			while (*s == ' ' || *s == '\t' || *s == '\n')
@@ -1340,8 +1327,8 @@ Cell *split(Node **a, int)	/* split(a[0], a[1], a[2]); a[3] is type */
 			temp = *s;
 			*s = '\0';
 			sprint(num, "%d", n);
-			if (is_number(t))
-				setsymtab(num, t, atof(t), STR|NUM, (Array *) ap->sval);
+			if (to_number(t, &f, nil))
+				setsymtab(num, t, f, STR|NUM, (Array *) ap->sval);
 			else
 				setsymtab(num, t, 0.0, STR, (Array *) ap->sval);
 			*s = temp;
@@ -1358,8 +1345,8 @@ Cell *split(Node **a, int)	/* split(a[0], a[1], a[2]); a[3] is type */
 			nb = chartorune(&r, s);
 			memmove(buf, s, nb);
 			buf[nb] = '\0';
-			if (isdigit(buf[0]))
-				setsymtab(num, buf, atof(buf), STR|NUM, (Array *) ap->sval);
+			if (to_number(buf, &f, nil))
+				setsymtab(num, buf, f, STR|NUM, (Array *) ap->sval);
 			else
 				setsymtab(num, buf, 0.0, STR, (Array *) ap->sval);
 		}
@@ -1372,8 +1359,8 @@ Cell *split(Node **a, int)	/* split(a[0], a[1], a[2]); a[3] is type */
 			temp = *s;
 			*s = '\0';
 			sprint(num, "%d", n);
-			if (is_number(t))
-				setsymtab(num, t, atof(t), STR|NUM, (Array *) ap->sval);
+			if (to_number(t, &f, nil))
+				setsymtab(num, t, f, STR|NUM, (Array *) ap->sval);
 			else
 				setsymtab(num, t, 0.0, STR, (Array *) ap->sval);
 			*s = temp;
@@ -1884,6 +1871,7 @@ Cell *sub(Node **a, int)	/* substitute command */
 		setsval(x, buf);	/* BUG: should be able to avoid copy */
 		result = True;;
 	}
+	releasere(p);
 	if (istemp(x))
 		tfree(x);
 	if (istemp(y))
@@ -1981,6 +1969,7 @@ Cell *gsub(Node **a, int)	/* global substitute */
 			;
 		setsval(x, buf);	/* BUG: should be able to avoid copy + free */
 	}
+	releasere(p);
 	if (istemp(x))
 		tfree(x);
 	if (istemp(y))

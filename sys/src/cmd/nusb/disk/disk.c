@@ -459,6 +459,7 @@ umsrequest(Umsc *umsc, ScsiPtr *cmd, ScsiPtr *data, int *status)
 		}
 	}
 
+Again:
 	/* read the transfer's status */
 	n = read(ums->epin->dfd, &csw, CswLen);
 	if(n <= 0){
@@ -472,8 +473,8 @@ umsrequest(Umsc *umsc, ScsiPtr *cmd, ScsiPtr *data, int *status)
 		goto Fail;
 	}
 	if(csw.tag != cbw.tag){
-		dprint(2, "%s: status tag mismatch\n", argv0);
-		goto Fail;
+		dprint(2, "%s: status tag mismatch: %lux != %lux\n", argv0, csw.tag, cbw.tag);
+		goto Again;
 	}
 	if(csw.status >= CswPhaseErr){
 		dprint(2, "%s: phase error\n", argv0);
@@ -771,8 +772,11 @@ dread(Req *req)
 			break;
 		case Pstatus:
 			n = snprint(buf, sizeof buf, "%11.0ud ", lun->status);
-			readbuf(req, buf, n);
+			if(n < count)
+				count = n;
 			lun->phase = Pcmd;
+			req->ofcall.count = count;
+			memmove(data, buf, count);
 			respond(req, nil);
 			break;
 		}
@@ -1037,6 +1041,30 @@ usage(void)
 static void
 notreallyums(Dev *dev)
 {
+	static uchar RealtekMagic[] = { 0x55, 0x53,
+					0x42, 0x43,
+					0x08, 0x60,
+					0xd9, 0xa9,
+					0xc0, 0x00,
+					0x00, 0x00,
+					0x80, 0x00,
+					0x06, 0xe0,
+					0x00, 0x00,
+					0x00, 0x00,
+					0x00, 0x00,
+					0x00, 0x00,
+					0x00, 0x00,
+					0x00, 0x00,
+					0x00, 0x00, 
+					0x00,
+	};
+
+	/* Realtek RTL8153 */
+	if(dev->usb->vid == 0x0bda && dev->usb->did == 0x8151){
+		write(ums->epout->dfd, RealtekMagic, sizeof(RealtekMagic));
+		exits("mode switch");
+	}
+
 	/* HUAWEI E220 */
 	if(dev->usb->vid == 0x12d1 && dev->usb->did == 0x1003){
 		usbcmd(dev, Rh2d|Rstd|Rdev, Rsetfeature, Fdevremotewakeup, 0x02, nil, 0);
@@ -1078,12 +1106,13 @@ main(int argc, char **argv)
 	dev = getdev(*argv);
 	if(dev == nil)
 		sysfatal("getdev: %r");
-	notreallyums(dev);
 	ums = dev->aux = emallocz(sizeof(Ums), 1);
 	ums->maxlun = -1;
 	if(findendpoints(ums, Protobulk) < 0
 	&& findendpoints(ums, Protouas) < 0)
 		sysfatal("findendpoints: %r");
+
+	notreallyums(dev);
 
 	/*
 	 * SanDISK 512M gets residues wrong.

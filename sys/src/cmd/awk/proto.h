@@ -35,6 +35,7 @@ extern	int	input(void);
 extern	void	unput(int);
 extern	void	unputstr(char *);
 
+extern	void	releasere(void *);
 extern	void	*compre(char *);
 extern	int	hexstr(char **);
 extern	void	quoted(char **, char **, char *);
@@ -117,7 +118,7 @@ extern	void	eprint(void);
 extern	void	bclass(int);
 extern	double	errcheck(double, char *);
 extern	int	isclvar(char *);
-extern	int	is_number(char *);
+extern	int	to_number(char *, Awkfloat *, char **);
 
 extern	int	adjbuf(char **pb, int *sz, int min, int q, char **pbp, char *what);
 extern	void	run(Node *);

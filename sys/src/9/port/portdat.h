@@ -13,6 +13,7 @@ typedef struct Evalue	Evalue;
 typedef struct Fgrp	Fgrp;
 typedef struct DevConf	DevConf;
 typedef struct Image	Image;
+typedef struct Lock	Lock;
 typedef struct Log	Log;
 typedef struct Logflag	Logflag;
 typedef struct Mntcache Mntcache;
@@ -47,6 +48,7 @@ typedef struct Segio	Segio;
 typedef struct Sema	Sema;
 typedef struct Timer	Timer;
 typedef struct Timers	Timers;
+typedef struct Tos	Tos;
 typedef struct Uart	Uart;
 typedef struct Waitq	Waitq;
 typedef struct Walkqid	Walkqid;
@@ -60,8 +62,19 @@ typedef int    Devgen(Chan*, char*, Dirtab*, int, int, Dir*);
 #pragma incomplete Mntrpc
 #pragma incomplete Queue
 #pragma incomplete Timers
+#pragma incomplete Tos
 
 #include <fcall.h>
+
+struct Lock
+{
+	ulong	key;
+	ulong	sr;
+	uintptr	pc;
+	Proc	*p;
+	Mach	*m;
+	ushort	isilock;
+};
 
 struct Ref
 {
@@ -258,11 +271,12 @@ struct Walkqid
 
 struct Mount
 {
-	uvlong	mountid;
-	int	mflag;
-	Mount*	next;
-	Mount*	order;
+	Mount*	order;			/* Pgrp.mntorder chain */
+	Mount*	norder;			/* forward pointer for pgrpcpy() */
+	Mount*	next;			/* Mhead.mount chain */
+	Mhead*	umh;			/* the union we belong to */ 
 	Chan*	to;			/* channel replacing channel */
+	int	mflag;
 	char	spec[];
 };
 
@@ -279,10 +293,9 @@ struct Mntrah
 {
 	Rendez;
 
-	ulong	vers;
-
 	vlong	off;
 	vlong	seq;
+	ulong	vers;
 
 	uint	i;
 	Mntrpc	*r[8];
@@ -510,7 +523,9 @@ struct Pgrp
 {
 	Ref;
 	RWLock	ns;			/* Namespace n read/one write lock */
-	u64int	notallowed[4];		/* Room for 256 devices */
+	uchar	devmask[256/8];		/* Room for 256 devices */
+	Mount	*mntorder;		/* Ordered list of mounts */
+	Mount	**mntordertail;
 	Mhead	*mnthash[MNTHASH];
 };
 
@@ -796,8 +811,8 @@ struct Proc
 	uintptr	qpc;		/* pc calling last blocking qlock */
 	QLock	*eql;		/* interruptable eqlock */
 
-	void	*noteureg;	/* User registers for notes */
-	void	*dbgreg;	/* User registers for devproc */
+	Ureg	*noteureg;	/* User registers for notes */
+	Ureg	*dbgreg;	/* User registers for devproc */
 
 	PFPU;			/* machine specific fpu state */
 	PMMU;			/* machine specific mmu state */

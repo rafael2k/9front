@@ -286,7 +286,9 @@ init1(Sym *s, Type *t, long o, int exflag)
 {
 	Node *a, *l, *r, nod;
 	Type *t1;
-	long e, w, so, mw;
+	long e, w, so, mw, bitoff;
+	static Node *bitagg;
+	static Type *bitaggt;
 
 	a = peekinit();
 	if(a == Z)
@@ -326,8 +328,6 @@ init1(Sym *s, Type *t, long o, int exflag)
 		if(a == Z)
 			return Z;
 
-		if(t->nbits)
-			diag(Z, "cannot initialize bitfields");
 		if(s->class == CAUTO) {
 			l = new(ONAME, Z, Z);
 			l->sym = s;
@@ -337,6 +337,10 @@ init1(Sym *s, Type *t, long o, int exflag)
 				l->etype = s->type->etype;
 			l->xoffset = s->offset + o;
 			l->class = s->class;
+			if(t->nbits) {
+				l = new(OBIT, l, Z);
+				l->type = t;
+			}
 
 			l = new(OASI, l, a);
 			return l;
@@ -370,7 +374,20 @@ init1(Sym *s, Type *t, long o, int exflag)
 			}
 			if(vconst(a) == 0)
 				return Z;
+
+			if(t->nbits) {
+				if(bitagg == Z)
+					bitagg = a;
+				a->vconst = (a->vconst & ((1ULL<<t->nbits) - 1)) << t->shift;
+				a->vconst = bitagg->vconst = a->vconst | bitagg->vconst;
+				return Z;
+			}
+
 			goto gext;
+		}
+		if(t->nbits) {
+			diag(a, "initializer is not a constant: %s", s->name);
+			return Z;
 		}
 		if(t->etype == TIND) {
 			if(a->op == OCAST)
@@ -491,6 +508,7 @@ init1(Sym *s, Type *t, long o, int exflag)
 			return Z;
 		}
 		l = Z;
+		bitoff = -1;
 
 	again:
 		for(t1 = t->link; t1 != T; t1 = t1->down) {
@@ -500,6 +518,15 @@ init1(Sym *s, Type *t, long o, int exflag)
 				if(t1->sym != a->sym)
 					continue;
 				nextinit();
+			}
+			if(t1->nbits && (bitoff != t1->offset || !bitagg)) {
+				if(a->op == OELEM && bitoff != -1)
+					diag(a, "named bitfield static initializers not supported %F", a);
+				if(bitagg)
+					gextern(s, bitagg, o+bitaggt->offset, bitaggt->width);
+				bitagg = Z;
+				bitaggt = t1;
+				bitoff = t1->offset;
 			}
 			r = init1(s, t1, o+t1->offset, 1);
 			l = newlist(l, r);
@@ -511,6 +538,11 @@ init1(Sym *s, Type *t, long o, int exflag)
 		}
 		if(a && a->op == OELEM)
 			diag(a, "structure element not found %F", a);
+		if(bitoff != -1) {
+			if(bitagg)
+				gextern(s, bitagg, o+bitaggt->offset, bitaggt->width);
+			bitagg = Z;
+		}
 		return l;
 	}
 }
@@ -1039,32 +1071,27 @@ rsametype(Type *t1, Type *t2, int n, int f)
 }
 
 typedef struct Typetab Typetab;
-
 struct Typetab{
-	int n;
+	int m, n;
 	Type **a;
 };
 
 static int
 sigind(Type *t, Typetab *tt)
 {
-	int n;
-	Type **a, **na, **p, **e;
+	Type **p, **e;
 
-	n = tt->n;
-	a = tt->a;
-	e = a+n;
 	/* linear search seems ok */
-	for(p = a ; p < e; p++)
+	e = tt->a+tt->n;
+	for(p = tt->a; p < e; p++){
 		if(sametype(*p, t))
-			return p-a;
-	if((n&15) == 0){
-		na = malloc((n+16)*sizeof(Type*));
-		memmove(na, a, n*sizeof(Type*));
-		free(a);
-		a = tt->a = na;
+			return p - tt->a;
 	}
-	a[tt->n++] = t;
+	if(tt->n == tt->m){
+		tt->a = allocn(tt->a, tt->n*sizeof(Type*), 16*sizeof(Type*));
+		tt->m += 16;
+	}
+	tt->a[tt->n++] = t;
 	return -1;
 }
 
@@ -1109,14 +1136,10 @@ signat(Type *t, Typetab *tt)
 ulong
 signature(Type *t)
 {
-	ulong s;
-	Typetab tt;
+	static Typetab tt;
 
-	tt.n = 0;
-	tt.a = nil;
-	s = signat(t, &tt);
-	free(tt.a);
-	return s;
+	tt.n = 0;	/* reset table */
+	return signat(t, &tt);
 }
 
 ulong

@@ -54,11 +54,11 @@ Awkfloat *RLENGTH;	/* length of same */
 Cell	*nrloc;		/* NR */
 Cell	*nfloc;		/* NF */
 Cell	*fnrloc;	/* FNR */
-Array	*ARGVtab;	/* symbol table containing ARGV[...] */
 Array	*ENVtab;	/* symbol table containing ENVIRON[...] */
 Cell	*rstartloc;	/* RSTART */
 Cell	*rlengthloc;	/* RLENGTH */
 Cell	*symtabloc;	/* SYMTAB */
+Cell	*argvloc;	/* ARGV */
 
 Cell	*nullloc;	/* a guaranteed empty cell */
 Node	*nullnode;	/* zero&null, converted into a node for comparisons */
@@ -98,19 +98,22 @@ void syminit(void)	/* initialize symbol table with builtin vars */
 void arginit(int ac, char **av)	/* set up ARGV and ARGC */
 {
 	Cell *cp;
+	Array *ap;
 	int i;
 	char temp[50];
+	Awkfloat f;
 
 	AARGC = &setsymtab("ARGC", EMPTY, (Awkfloat) ac, NUM, symtab)->fval;
 	cp = setsymtab("ARGV", EMPTY, 0.0, ARR, symtab);
-	ARGVtab = makesymtab(NSYMTAB);	/* could be (int) ARGC as well */
-	cp->sval = (char *) ARGVtab;
+	argvloc = cp;
+	ap = makesymtab(NSYMTAB);	/* could be (int) ARGC as well */
+	cp->sval = (char *) ap;
 	for (i = 0; i < ac; i++) {
 		sprint(temp, "%d", i);
-		if (is_number(*av))
-			setsymtab(temp, *av, atof(*av), STR|NUM, ARGVtab);
+		if (to_number(*av, &f, nil))
+			setsymtab(temp, *av, f, STR|NUM, ap);
 		else
-			setsymtab(temp, *av, 0.0, STR, ARGVtab);
+			setsymtab(temp, *av, 0.0, STR, ap);
 		av++;
 	}
 }
@@ -120,6 +123,7 @@ void envinit(void)	/* set up ENVIRON variable */
 	int	fd, i, n;
 	char	*k, *v;
 	Dir	*buf;
+	Awkfloat f;
 
 	ENVtab = makesymtab(NSYMTAB);
 	if ((fd = open("/env", OREAD)) < 0)
@@ -133,8 +137,8 @@ void envinit(void)	/* set up ENVIRON variable */
 				continue;
 			if ((v = getenv(k)) == nil)
 				continue;
-			if (is_number(v))
-				setsymtab(k, v, atof(v), STR|NUM, ENVtab);
+			if (to_number(v, &f, nil))
+				setsymtab(k, v, f, STR|NUM, ENVtab);
 			else
 				setsymtab(k, v, 0.0, STR, ENVtab);
 			free(v);
@@ -229,7 +233,7 @@ Cell *setsymtab(char *n, char *s, Awkfloat f, unsigned t, Array *tp)
 		p->sval = (char *) ENVtab;
 		p->tval = ARR;
 	} else {
-		p->sval = s != nil && s != EMPTY ? tostring(s) : EMPTY;
+		p->sval = s && *s ? tostring(s) : EMPTY;
 		p->tval = t;
 		if (p->sval == EMPTY)
 			p->tval |= DONTFREE;
@@ -342,7 +346,7 @@ char *setsval(Cell *vp, char *s)	/* set string val of a Cell */
 		donefld = 0;	/* mark $1... invalid */
 		donerec = 1;
 	}
-	t = s != nil && s != EMPTY ? tostring(s) : EMPTY;	/* in case it's self-assign */
+	t = s && *s ? tostring(s) : EMPTY;	/* in case it's self-assign */
 	vp->tval &= ~NUM;
 	vp->tval |= STR;
 	if (freeable(vp))
@@ -364,9 +368,11 @@ Awkfloat getfval(Cell *vp)	/* get float val of a Cell */
 	else if (isrec(vp) && donerec == 0)
 		recbld();
 	if (!isnum(vp)) {	/* not a number */
-		vp->fval = atof(vp->sval);	/* best guess */
-		if (is_number(vp->sval) && !(vp->tval&CON))
-			vp->tval |= NUM;	/* make NUM only sparingly */
+		vp->fval = 0;
+		if (to_number(vp->sval, &vp->fval, nil)) {
+			if (!(vp->tval&CON))
+				vp->tval |= NUM;	/* make NUM only sparingly */
+		}
 	}
 	   dprint( ("getfval %p: %s = %g, t=%o\n", vp, vp->nval, vp->fval, vp->tval) );
 	return(vp->fval);
