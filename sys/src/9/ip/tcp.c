@@ -413,6 +413,13 @@ tcpsetstate(Conv *s, uchar newstate)
 		qclose(s->wq);
 		qclose(s->eq);
 		if(tcb->bypass != nil){
+			Conv *o = tcb->bypass;
+			Tcpctl *otcb = (Tcpctl*)o->ptcl;
+			if(otcb->bypass == s){
+				otcb->bypass = nil;
+				qsetbypass(o->wq, nil);
+				qhangup(o->wq, "connection closed");
+			}
 			tcb->bypass = nil;
 			qsetbypass(s->wq, nil);
 		}
