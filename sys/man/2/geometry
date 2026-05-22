@@ -1,6 +1,17 @@
 .TH GEOMETRY 2
 .SH NAME
-Flerp, fberp, fclamp, Pt2, Vec2, addpt2, subpt2, mulpt2, divpt2, lerp2, berp2, dotvec2, vec2len, normvec2, edgeptcmp, ptinpoly, Pt3, Vec3, addpt3, subpt3, mulpt3, divpt3, lerp3, berp3, dotvec3, crossvec3, vec3len, normvec3, identity, addm, subm, mulm, smulm, transposem, detm, tracem, minorm, cofactorm, adjm, invm, xform, identity3, addm3, subm3, mulm3, smulm3, transposem3, detm3, tracem3, minorm3, cofactorm3, adjm3, invm3, xform3, Quat, Quatvec, addq, subq, mulq, smulq, sdivq, dotq, invq, qlen, normq, slerp, qrotate, rframematrix, rframematrix3, rframexform, rframexform3, invrframexform, invrframexform3, centroid, barycoords, centroid3, vfmt, Vfmt, GEOMfmtinstall \- computational geometry library
+Flerp, fberp, fclamp, Pt2, Vec2, addpt2, subpt2, mulpt2, divpt2,
+lerp2, berp2, dotvec2, vec2len, normvec2, edgeptcmp, ptinpoly, Pt3,
+Vec3, addpt3, subpt3, mulpt3, divpt3, lerp3, berp3, dotvec3,
+crossvec3, vec3len, normvec3, lineXsphere, ptincylinder, ptincone,
+identity, addm, subm, mulm, smulm, transposem, detm, tracem, minorm,
+cofactorm, adjm, invm, xform, identity3, addm3, subm3, mulm3, smulm3,
+transposem3, detm3, tracem3, minorm3, cofactorm3, adjm3, invm3,
+xform3, Quat, Quatvec, addq, subq, mulq, smulq, sdivq, dotq, invq,
+qlen, normq, slerp, qsandwich, qsandwichpt3, qrotate, rframematrix,
+rframematrix3, rframexform, rframexform3, invrframexform,
+invrframexform3, centroid, barycoords, centroid3, vfmt, Vfmt,
+GEOMfmtinstall \- computational geometry library
 .SH SYNOPSIS
 .de PB
 .PP
@@ -64,7 +75,7 @@ Point2 berp2(Point2 a, Point2 b, Point2 c, Point3 bc)
 double dotvec2(Point2 a, Point2 b)
 double vec2len(Point2 v)
 Point2 normvec2(Point2 v)
-Point2 centroid(Point2 p0, Point2 p1, Point2 p2)
+Point2 centroid(Point2 *pts, ulong npts)
 Point3 barycoords(Point2 p0, Point2 p1, Point2 p2, Point2 p)
 int edgeptcmp(Point2 e0, Point2 e1, Point2 p)
 int ptinpoly(Point2 p, Point2 *pts, ulong npts)
@@ -82,7 +93,7 @@ double dotvec3(Point3 a, Point3 b)
 Point3 crossvec3(Point3 a, Point3 b)
 double vec3len(Point3 v)
 Point3 normvec3(Point3 v)
-Point3 centroid3(Point3 p0, Point3 p1, Point3 p2)
+Point3 centroid3(Point3 *pts, ulong npts)
 int lineXsphere(Point3 *rp, Point3 p0, Point3 p1,
 		Point3 c, double rad, int isaray)
 int ptincylinder(Point3 p, Point3 p0, Point3 p1, double r)
@@ -270,8 +281,8 @@ Normalizes the vector
 .I v
 and returns a new 2D point.
 .TP
-.B centroid(\fIp0\fP,\fIp1\fP,\fIp2\fP)
-Returns the geometric center of a triangle defined by three points.
+.B centroid(\fIpts\fP,\fInpts\fP)
+Returns the geometric center of a collection of 2D points.
 .TP
 .B barycoords(\fIp0\fP,\fIp1\fP,\fIp2\fP,\fIp\fP)
 Returns a 3D point that represents the barycentric coordinates of the
@@ -370,8 +381,8 @@ Normalizes the vector
 .I v
 and returns a new 3D point.
 .TP
-.B centroid3(\fIp0\fP,\fIp1\fP,\fIp2\fP)
-Returns the geometric center of a triangle defined by three points.
+.B centroid3(\fIpts\fP,\fInpts\fP)
+Returns the geometric center of a collection of 3D points.
 .TP
 .B lineXsphere(\fIrp\fP,\fIp0\fP,\fIp1\fP,\fIc\fP,\fIrad\fP,\fIisaray\fP)
 Finds the intersection between the line defined by
