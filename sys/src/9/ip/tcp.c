@@ -204,6 +204,7 @@ struct Tcpctl
 	uchar	state;			/* Connection state */
 	uchar	flags;			/* State flags */
 	uchar	flgcnt;			/* Number of flags in the send sequence (FIN,SYN) */
+	uchar	bypeerclosed;		/* spliced peer was torn down via tcpsetstate Closed */
 	struct {
 		ulong	una;		/* Unacked data pointer */
 		ulong	nxt;		/* Next sequence expected */
@@ -416,6 +417,17 @@ tcpsetstate(Conv *s, uchar newstate)
 			Conv *o = tcb->bypass;
 			Tcpctl *otcb = (Tcpctl*)o->ptcl;
 			if(otcb->bypass == s){
+				/*
+				 * Set the bypeerclosed flag BEFORE clearing
+				 * the peer's bypass pointer.  The peer's
+				 * tcpclose path tests bypass first and then
+				 * bypeerclosed; on TSO this order guarantees
+				 * that if it observes bypass=nil it will also
+				 * observe bypeerclosed=1 and take the
+				 * "local close" branch instead of sending a
+				 * stray FIN.
+				 */
+				otcb->bypeerclosed = 1;
 				otcb->bypass = nil;
 				qsetbypass(o->wq, nil);
 				qhangup(o->wq, "connection closed");
@@ -537,6 +549,19 @@ tcpclose(Conv *c)
 	case Established:
 		if(tcb->bypass != nil){
 			qhangup(tcb->bypass->rq, nil);
+			localclose(c, nil);
+			break;
+		}
+		if(tcb->bypeerclosed){
+			/*
+			 * Spliced peer was torn down in tcpsetstate(Closed)
+			 * and is no longer in the iphash.  Sending a FIN to
+			 * it would only bounce back as a RST that might land
+			 * on a freshly recycled conv with the same iphash
+			 * key (rare under SMP but observable in
+			 * net.TestVariousDeadlines).  Just localclose
+			 * ourselves; the peer has already moved on.
+			 */
 			localclose(c, nil);
 			break;
 		}
