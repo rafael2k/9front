@@ -94,6 +94,13 @@ enum {
 };
 
 enum {
+	Qmainroot,
+	Qadmroot,
+	Qadmuser,
+	Nreamqid,
+};
+
+enum {
 	/*
 	 * dent: pqid[8] qid[8] -- a directory entry key.
 	 * ptr:  off[8] hash[8] gen[8] -- a key for an Dir block.
@@ -131,8 +138,10 @@ enum {
 };
 
 enum {
-	Qdump	= 1ULL << 63,
-	Qctl	= ~0ULL,
+	Qmagic	= 1ULL << 63,
+	Qdump	= Qmagic,
+	Qctl,
+	Qstatus,
 };
 
 #define Zb (Bptr){-1, -1, -1}
@@ -180,8 +189,11 @@ extern char Enone[];
 extern char Enoauth[];
 extern char Ephase[];
 extern char Ecdir[];
-extern char Ectl[];
+extern char Ebadctl[];
 extern char Enoqid[];
+
+extern char Esnapu[];
+extern char Esnapx[];
 
 extern char Ewstatt[];
 extern char Ewstatb[];
@@ -311,6 +323,7 @@ enum{
 	Owuid	= 1<<4,	/* [4]uid: set uid */
 	Owgid	= 1<<5,	/* [4]uid: set gid */
 	Owmuid	= 1<<6,	/* [4]uid: set muid */
+	Owqpath = 1<<7, /* [8]qpath: set qid.path */
 };
 
 /*
@@ -345,6 +358,7 @@ enum {
 	DFbp,
 	DFmnt,
 	DFtree,
+	DFclose,
 	DFdlist,
 };
 
@@ -411,7 +425,6 @@ struct Bucket {
 
 struct Amsg {
 	int	op;
-	int	fd;
 	union {
 		/* AOsync, AOhalt: no data */
 		struct {	/* AOsnap */
@@ -553,10 +566,12 @@ struct Gefs {
 
 	QLock	mutlk;
 	Along	nworker;
+
 	Along	epoch;
 	Along	lepoch[32];
 	Aptr	limbo[3]; /* Limbo* */
 	Along	nlimbo;
+	Lock	epochlk;
 
 	Syncq	syncq[32];
 
@@ -728,6 +743,8 @@ struct Fid {
 
 	char	permit;
 	char	fromdump;
+
+	void	*aux;
 };
 
 enum {

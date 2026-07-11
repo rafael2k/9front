@@ -69,11 +69,11 @@ initblitter(Blitter *b, Memimage *i)
 }
 
 static Point
-xform(Point p, Warp m)
+xform(Point p, Warp *m)
 {
 	return (Point){
-		fixmul(p.x, m[0][0]) + fixmul(p.y, m[0][1]) + m[0][2],
-		fixmul(p.x, m[1][0]) + fixmul(p.y, m[1][1]) + m[1][2]
+		fixmul(p.x, m->m[0][0]) + fixmul(p.y, m->m[0][1]) + m->m[0][2],
+		fixmul(p.x, m->m[1][0]) + fixmul(p.y, m->m[1][1]) + m->m[1][2]
 	};
 }
 
@@ -748,8 +748,56 @@ correlate(Sampler *s, Point p)
 	return r<<24|g<<16|b<<8|a;
 }
 
+/*
+ * integer upscaling optimization
+ */
+static void
+intupscalewarp(Blitter *blit, Rectangle r, Sampler *samp, Point sp0, Warp *m)
+{
+	Point sp, dp, p2;
+	ulong c, bpl;
+	int p2x₀, i, dxdx, dydy;
+	uchar *p;
+
+	bpl = Dx(r)*blit->i->depth >> 3;
+
+	p2.x = int2fix(r.min.x - blit->i->r.min.x) + (1<<12);
+	p2.y = int2fix(r.min.y - blit->i->r.min.y) + (1<<12);
+	p2 = xform(p2, m);
+	p2x₀ = p2.x;
+
+	dxdx = m->m[0][0];
+	dydy = m->m[1][1];
+
+	for(dp.y = r.min.y; dp.y < r.max.y; ){
+		sp.y = sp0.y + fix2int(p2.y);
+	for(dp.x = r.min.x; dp.x < r.max.x; ){
+		sp.x = sp0.x + fix2int(p2.x);
+
+		c = sample1(samp, sp);
+		for(i = fixfrac(p2.x); i < int2fix(1) && dp.x < r.max.x; i += dxdx){
+			blit->fn(blit, dp, c);
+			dp.x++;
+			p2.x += dxdx;
+		}
+	}
+		p = blit->a + dp.y*blit->bpl + (r.min.x*blit->i->depth >> 3);
+		dp.y++;
+		i = fixfrac(p2.y);
+		p2.y += dydy;
+		i += dydy;
+		for(; i < int2fix(1) && dp.y < r.max.y; i += dydy){
+			memmove(p+blit->bpl, p, bpl);
+			p += blit->bpl;
+			dp.y++;
+			p2.y += dydy;
+		}
+		p2.x = p2x₀;
+	}
+}
+
 void
-memaffinewarp(Memimage *d, Rectangle r, Memimage *s, Point sp0, Warp m, int smooth)
+memaffinewarp(Memimage *d, Rectangle r, Memimage *s, Point sp0, Warp *m, int smooth)
 {
 	ulong (*sample)(Sampler*, Point);
 	Sampler samp;
@@ -767,10 +815,22 @@ memaffinewarp(Memimage *d, Rectangle r, Memimage *s, Point sp0, Warp m, int smoo
 	if(rectclip(&samp.r, s->r) == 0)
 		return;
 
+	/* avoid sw cursor */
+	static Memdrawparam par;
+	par.dst = d;
+	par.src = s;
+	par.r = r;
+	hwdraw(&par);
+
 	sample = smooth? bilinear: sample1;
 
 	initsampler(&samp, s);
 	initblitter(&blit, d);
+
+	if(!smooth && (m->flags & WFintupscale) != 0){
+		intupscalewarp(&blit, r, &samp, sp0, m);
+		return;
+	}
 
 	/*
 	 * incremental affine warping technique from:
@@ -793,11 +853,11 @@ memaffinewarp(Memimage *d, Rectangle r, Memimage *s, Point sp0, Warp m, int smoo
 		c = sample(&samp, sp);
 		blit.fn(&blit, dp, c);
 
-		p2.x += m[0][0];
-		p2.y += m[1][0];
+		p2.x += m->m[0][0];
+		p2.y += m->m[1][0];
 	}
-		p2.x = p2₀.x += m[0][1];
-		p2.y = p2₀.y += m[1][1];
+		p2.x = p2₀.x += m->m[0][1];
+		p2.y = p2₀.y += m->m[1][1];
 	}
 }
 
