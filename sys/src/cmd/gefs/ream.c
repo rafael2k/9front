@@ -99,8 +99,9 @@ initsnap(Blk *s, Blk *r, Blk *a)
 	t.nlbl = 1;
 	t.ht = 1;
 	t.gen = fs->nextgen++;
-	t.pred = 0;
-	t.succ = 2;
+	t.base = -1;
+	t.pred = -1;
+	t.succ = -1;
 	t.bp = r->bp;
 	p = packtree(p, e - p, &t);
 	kv.nv = p - kv.v;
@@ -119,7 +120,8 @@ initsnap(Blk *s, Blk *r, Blk *a)
 	t.nlbl = 1;
 	t.ht = 1;
 	t.gen = fs->nextgen++;
-	t.pred = 0;
+	t.base = 0;
+	t.pred = -1;
 	t.succ = -1;
 	t.bp = a->bp;
 	p = packtree(p, e - p, &t);
@@ -139,7 +141,8 @@ initsnap(Blk *s, Blk *r, Blk *a)
 	t.nlbl = 1;
 	t.ht = 1;
 	t.gen = fs->nextgen++;
-	t.pred = 0;
+	t.base = 0;
+	t.pred = -1;
 	t.succ = -1;
 	t.bp = r->bp;
 	p = packtree(p, e - p, &t);
@@ -376,26 +379,12 @@ growfs(char *dev)
 	vlong oldsz, newsz, asz, off, eb;
 	int i, narena;
 	Arena *a;
-	Bptr bp;
 	Dir *d;
 
 	if(waserror())
 		sysfatal("grow %s: %s", dev, errmsg());
-	if((fs->fd = open(dev, ORDWR)) == -1)
-		sysfatal("open %s: %r", dev);
 	if((d = dirfstat(fs->fd)) == nil)
 		sysfatal("ream: %r");
-
-	bp = (Bptr){0, -1, -1};
-	fs->sb0 = getblk(bp, GBnochk);
-	unpacksb(fs, fs->sb0->buf, Blksz);
-	if((fs->arenas = calloc(fs->narena, sizeof(Arena))) == nil)
-		sysfatal("malloc: %r");
-	for(i = 0; i < fs->narena; i++){
-		a = &fs->arenas[i];
-		loadarena(a, fs->arenabp[i]);
-		fs->arenabp[i] = a->h0->bp;
-	}
 	a = &fs->arenas[fs->narena-1];
 	oldsz = a->h0->bp.addr + a->size + 2*Blksz;
 	newsz = d->length - d->length%Blksz - 2*Blksz;

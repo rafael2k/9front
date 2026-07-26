@@ -5,6 +5,7 @@
 #include "dat.h"
 
 char Efs[]	= "internal error";
+char Enoval[]	= "message to missing key";
 char Ecorrupt[] = "block contents corrupted";
 char Efsvers[]	= "unknown fs version";
 char Eimpl[]	= "not implemented";
@@ -47,9 +48,13 @@ char Ebadctl[]	= "invalid control message";
 char Enoqid[]	= "qids exhausted";
 char Enempty[]	= "directory is not empty";
 char Enoadm[]	= "missing adm snapshot";
+char Echeck[]	= "check -- fs not ok";
+char Eopen[]	= "read/write -- on non open fid";
+char Eoffset[]	= "read/write -- offset negative";
 
 char Esnapu[]	= "snap -- is currently mounted";
 char Esnapx[]	= "snap -- already exists";
+char Esnapr[]	= "snap -- reserved name";
 
 char Ewstatb[]	= "wstat -- unknown bits in qid.type/mode";
 char Ewstatd[]	= "wstat -- attempt to change directory";
@@ -59,21 +64,3 @@ char Ewstatm[]	= "wstat -- attempt to change muid";
 char Ewstato[]	= "wstat -- not owner or group leader";
 char Ewstatu[]	= "wstat -- not owner";
 char Ewstatq[]	= "wstat -- attempt to change qid";
-
-//char Eopen[]		= "read/write -- on non open fid";
-//char Ecount[]		= "read/write -- count too big";
-//char Eaccess[]	= "access permission denied";
-//char Eentry[]		= "directory entry not found";
-//char Edir1[]		= "walk -- in a non-directory";
-//char Edot[]		= "create/wstat -- . and .. illegal names";
-//char Ewalk[]		= "walk -- too many (system wide)";
-//char Eoffset[]	= "read/write -- offset negative";
-//char Ebroken[]	= "read/write -- lock is broken";
-//char Eauth[]		= "attach -- authentication failed";
-//char Eauth2[]		= "read/write -- authentication unimplemented";
-//char Etoolong[]	= "name too long";
-//char Efidinuse[]	= "fid in use";
-//char Eversion[]	= "version conversion";
-//char Eauthnone[]	= "auth -- user 'none' requires no authentication";
-//char Eauthdisabled[]	= "auth -- authentication disabled";	/* development */
-//char Eauthfile[]	= "auth -- out of auth files";

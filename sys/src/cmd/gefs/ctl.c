@@ -7,7 +7,6 @@
 #include "dat.h"
 #include "fns.h"
 
-
 static void
 fmtdf(Fmt *fmt)
 {
@@ -42,8 +41,10 @@ static void
 showconf(Fmt *fmt, Tree *t, char *name)
 {
 	char pfx[1];
+	int shown;
 	Scan s;
 
+	shown = 0;
 	pfx[0] = Kconf;
 	btnewscan(&s, pfx, 1);
 	btenter(t, &s);
@@ -52,8 +53,11 @@ showconf(Fmt *fmt, Tree *t, char *name)
 			break;
 		fmtprint(fmt, "conf %q %.*q %.*q\n",
 			name, (int)s.kv.nk-1, s.kv.k+1, (int)s.kv.nv, s.kv.v);
+		shown = 1;
 	}
 	btexit(&s);
+	if(name[0] == 0 && !shown)
+		fmtprint(fmt, "conf retain '' '60@m 24@h @d'\n");
 }
 
 static void
@@ -151,17 +155,28 @@ asend(int op, Fmsg *m)
 }
 
 static void
-setconf(char *snap, char *k, char *v, Fmsg *m)
+setretain(char *snap, char **spec, int nspec, Fmsg *m)
 {
+	char *p, *e;
 	Amsg *a;
+	int i;
 
 	a = emalloc(sizeof(Amsg), 1);
-	a->op = AOsetcfg;
 	a->m = m;
-	if(snap != nil)
+	strecpy(a->key, a->key+sizeof(a->key), "retain");
+	if(strcmp(snap, "-") != 0)
 		strecpy(a->snap, a->snap+sizeof(a->snap), snap);
-	strecpy(a->key, a->key+sizeof(a->key), k);
-	strecpy(a->val, a->val+sizeof(a->val), v);
+	if(nspec == 1 && strcmp(spec[0], "default") == 0){
+		a->op = AOclrcfg;
+		a->val[0] = 0;
+	}else{
+		a->op = AOsetcfg;
+		p = a->val;
+		e = p + sizeof(a->val);
+		if(nspec != 1 || strcmp(spec[0], "none") != 0)
+			for(i = 0; i < nspec; i++)
+				p = seprint(p, e, "%s ", spec[i]);
+	}
 	chsend(fs->admchan, a);
 }
 
@@ -175,7 +190,6 @@ clrsnap(char *tag, Fmsg *m)
 	a->delete = 1;
 	a->m = m;
 	strecpy(a->old, a->old+sizeof(a->old), tag);
-	asend(AOsync, nil);
 	chsend(fs->admchan, a);
 }
 
@@ -191,7 +205,6 @@ takesnap(char *old, char *new, int flag, Fmsg *m)
 	a->m = m;
 	strecpy(a->old, a->old+sizeof(a->old), old);
 	strecpy(a->new, a->new+sizeof(a->new), new);
-	asend(AOsync, nil);
 	chsend(fs->admchan, a);
 }
 
@@ -243,9 +256,6 @@ writectl(Fmsg *m, Fid *f)
 	r.type = Rwrite;
 	r.count = m->count;
 	switch(nsp){
-	default:
-		error(Ebadctl);
-		break;
 	case 1:
 		if(strcmp(sp[0], "sync") == 0)
 			asend(AOsync, m);
@@ -254,7 +264,10 @@ writectl(Fmsg *m, Fid *f)
 			respond(m, &r);
 			asend(AOhalt, nil);
 		}else if(strcmp(sp[0], "check") == 0){
-			checkfs(2);
+			if(!checkfs(2)){
+				r.type = Rerror;
+				r.ename = Echeck;
+			}
 			respond(m, &r);
 		}else if(strcmp(sp[0], "users") == 0){
 			refreshusers();
@@ -263,9 +276,7 @@ writectl(Fmsg *m, Fid *f)
 			error(Ebadctl);
 		break;
 	case 2:
-		if(strcmp(sp[0], "clr") == 0)
-			clrconf(nil, sp[1], m);
-		else if(strcmp(sp[0], "delsnap") == 0)
+		if(strcmp(sp[0], "delsnap") == 0)
 			clrsnap(sp[1], m);
 		else if(strcmp(sp[0], "reserve") == 0){
 			usereserve = atoi(sp[1]);
@@ -277,10 +288,8 @@ writectl(Fmsg *m, Fid *f)
 			error(Ebadctl);
 		break;
 	case 3:
-		if(strcmp(sp[0], "set") == 0)
-			setconf(nil, sp[1], sp[2], m);
-		else if(strcmp(sp[0], "clr") == 0)
-			clrconf(sp[1], sp[2], m);
+		if(strcmp(sp[0], "retain") == 0)
+			setretain(sp[1], &sp[2], nsp-2, m);
 		else if(strcmp(sp[0], "snap") == 0)
 			takesnap(sp[1], sp[2], 0, m);
 		else if(strcmp(sp[0], "fork") == 0)
@@ -288,9 +297,9 @@ writectl(Fmsg *m, Fid *f)
 		else
 			error(Ebadctl);
 		break;
-	case 4:
-		if(strcmp(sp[0], "set") == 0)
-			setconf(sp[1], sp[2], sp[3], m);
+	default:
+		if(strcmp(sp[0], "retain") == 0)
+			setretain(sp[1], &sp[2], nsp-2, m);
 		else
 			error(Ebadctl);
 		break;

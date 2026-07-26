@@ -121,9 +121,11 @@ sync(int id)
 	tracem("packb");
 
 	for(mnt = agetp(&fs->mounts); mnt != nil; mnt = mnt->next){
-		r = agetp(&mnt->root);
-		r = updatesnap(r, mnt->name, mnt->flag);
-		aswapp(&mnt->root, r);
+		if(mnt->flag & Lmut){
+			r = agetp(&mnt->root);
+			r = updatesnap(r, mnt->name, mnt->flag);
+			aswapp(&mnt->root, r);
+		}
 	}
 
 	/*
@@ -220,23 +222,29 @@ sync(int id)
 	poperror();
 }
 
-static void
-snapfs(Amsg *a, Tree **tp)
+/*
+ * Adds or removes a labelled snapshot; if the tree
+ * needs to be cleaned up outside of the epoch, it
+ * is returned, otherwise snapfs returns nil.
+ */
+static Tree*
+snapfs(Amsg *a)
 {
 	Tree *t, *s, *r;
 	Mount *mnt;
 
 	t = nil;
 	r = nil;
-	*tp = nil;
 	for(mnt = agetp(&fs->mounts); mnt != nil; mnt = mnt->next){
-		if(strcmp(a->old, mnt->name) == 0){
-			t = agetp(&mnt->root);
+		if(strcmp(a->old, mnt->name) != 0)
+			continue;
+		t = agetp(&mnt->root);
+		if(mnt->flag & Lmut){
 			t = updatesnap(t, mnt->name, mnt->flag);
-			aincl(&t->memref, 1);
 			aswapp(&mnt->root, t);
-			break;
 		}
+		aincl(&t->memref, 1);
+		break;
 	}
 	if(t == nil && (t = opensnap(a->old, nil)) == nil)
 		error(Eexist);
@@ -245,25 +253,22 @@ snapfs(Amsg *a, Tree **tp)
 		nexterror();
 	}
 	if(a->delete){
-		if(mnt != nil){
-			clunkmount(mnt);
+		if(mnt != nil)
 			error(Esnapu);
-		}
-		if(t->nlbl == 1 && t->nref <= 1 && t->succ == -1){
-			aincl(&t->memref, 1);
+		if(delsnap(t, t->succ, a->old))
 			r = t;
-		}
-		delsnap(t, t->succ, a->old);
+		else
+			closesnap(t);
 	}else{
 		if((s = opensnap(a->new, nil)) != nil){
 			closesnap(s);
 			error(Esnapx);
 		}
 		tagsnap(t, a->new, a->flag);
+		closesnap(t);
 	}
-	closesnap(t);
 	poperror();
-	*tp = r;
+	return r;
 }
 
 static void
@@ -420,7 +425,7 @@ upsert(Mount *mnt, Msg *m, int nm)
 {
 	Tree *r;
 
-	if(!(mnt->flag & Lmut))
+	if(!(mnt->flag & Lmut) || agetl(&fs->rdonly))
 		error(Erdonly);
 	r = agetp(&mnt->root);
 	if(r->nlbl != 1 || r->nref != 0) {
@@ -1099,7 +1104,6 @@ authwrite(Fid *f, Fmsg *m)
 	r.type = Rwrite;
 	r.count = m->count;
 	respond(m, &r);
-
 }
 
 /* fsauth: must not raise error() */
@@ -1160,6 +1164,7 @@ fsauth(Fmsg *m)
 		rerror(m, Efid);
 		return;
 	}
+	nf->mode = 0777;
 	putfid(nf);
 	r.type = Rauth;
 	r.aqid = de->qid;
@@ -1402,7 +1407,7 @@ fswalk(Fmsg *m)
 	vlong up, upup, prev;
 	Dent *dent, *dir;
 	Fid *o, *f;
-	Mount *mnt;
+	Mount *mnt, *wmnt;
 	Amsg *ao;
 	Tree *t;
 	Fcall r;
@@ -1414,7 +1419,9 @@ fswalk(Fmsg *m)
 	if((o = getfid(m->conn, m->fid)) == nil)
 		error(Enofid);
 	rlock(o);
+	wmnt = nil;
 	if(waserror()){
+		clunkmount(wmnt);
 		runlock(o);
 		putfid(o);
 		nexterror();
@@ -1449,9 +1456,11 @@ fswalk(Fmsg *m)
 			}
 			findparent(t, up, &prev, &name, kbuf, sizeof(kbuf));
 		}else if(d.qid.path == Qdump){
-			mnt = getmount(name);	/* mnt leaked on error() */
+			mnt = getmount(name);
+			clunkmount(wmnt);
 			name = "";
 			prev = -1ULL;
+			wmnt = mnt;
 			t = agetp(&mnt->root);
 		}
 		up = prev;
@@ -1479,6 +1488,7 @@ fswalk(Fmsg *m)
 	}
 	poperror();
 	if(waserror()){
+		clunkmount(wmnt);
 		putfid(f);
 		nexterror();
 	}
@@ -1526,6 +1536,7 @@ fswalk(Fmsg *m)
 		wunlock(f);
 		poperror();
 	}
+	clunkmount(wmnt);
 	putfid(f);
 	poperror();
 	respond(m, &r);
@@ -1988,6 +1999,8 @@ fsremove(Fmsg *m, int id, Amsg **ao)
 	nm = 0;
 	wlock(f);
 	clunkfid(m->conn, f, ao);
+	if(agetl(&fs->rdonly))
+		error(Erdonly);
 	truncwait(f->dent, id);
 	wlock(f->dent);
 	if(waserror()){
@@ -2002,8 +2015,6 @@ fsremove(Fmsg *m, int id, Amsg **ao)
 		error(Eperm);
 	if(f->dent->gone)
 		error(Ephase);
-	if((f->dent->qid.type & QTEXCL) && agetl(&f->dent->ref) != 1)
-		error(Elocked);
 	/*
 	 * we need a double check that the file is in the tree
 	 * here, because the walk to the fid is done in a reader
@@ -2174,7 +2185,7 @@ fsopen(Fmsg *m, int id, Amsg **ao)
 static void
 readsnap(Fmsg *m, Fid *f, Fcall *r)
 {
-	char pfx[1], *p;
+	char pfx[1], name[Maxname+1], *p;
 	int n, ns;
 	Scan *s;
 	Xdir d;
@@ -2203,6 +2214,7 @@ readsnap(Fmsg *m, Fid *f, Fcall *r)
 	p = r->data;
 	n = m->count;
 	filldumpdir(&d);
+	d.name = name;
 	if(s->overflow){
 		memcpy(d.name, s->kv.k+1, s->kv.nk-1);
 		d.name[s->kv.nk-1] = 0;
@@ -2359,6 +2371,10 @@ fsread(Fmsg *m)
 		error(Enofid);
 	if(f->dent->gone)
 		error(Ephase);
+	if(f->mode == -1)
+		error(Eopen);
+	if(m->offset < 0)
+		error(Eoffset);
 	r.type = Rread;
 	r.count = 0;
 	r.data = nil;
@@ -2399,6 +2415,10 @@ fswrite(Fmsg *m, int id)
 
 	if((f = getfid(m->conn, m->fid)) == nil)
 		error(Enofid);
+	if(f->mode == -1)
+		error(Eopen);
+	if(m->offset < 0)
+		error(Eoffset);
 	if((f->dent->qid.type & QTAUTH)
 	|| (f->dent->qid.path & Qmagic)){
 		/*
@@ -2419,7 +2439,9 @@ fswrite(Fmsg *m, int id)
 		putfid(f);
 		poperror();
 		return;
-	}	
+	}
+	if(agetl(&fs->rdonly))
+		error(Erdonly);
 	wlock(f);
 	truncwait(f->dent, id);
 	wlock(f->dent);
@@ -2687,6 +2709,8 @@ migrateusers(int id, Mount *mnt)
 		dir2kv(Qadmroot, &d, &m[nm], buf[nm], sizeof(buf[nm]));
 		nm++;
 	}
+	if(nm == 0)
+		return;
 	qlock(&fs->mutlk);
 	upsert(mnt, m, nm);
 	qunlock(&fs->mutlk);
@@ -2699,41 +2723,29 @@ runmutate(int id, void *)
 	Mount *mnt;
 	Fmsg *m;
 	Amsg *a;
-	Fid *f;
 
-	mnt = getmount("adm");
-	migrateusers(id, mnt);
-	clunkmount(mnt);
+	if(!agetl(&fs->rdonly)){
+		mnt = getmount("adm");
+		migrateusers(id, mnt);
+		clunkmount(mnt);
+	}
 
 	while(1){
 		a = nil;
 		m = chrecv(fs->wrchan);
-		if(agetl(&fs->rdonly)){
-			/*
-			 * special case: even if Tremove fails, we need
-			 * to clunk the fid.
-			 */
-			if(m->type == Tremove){
-				if((f = getfid(m->conn, m->fid)) == nil){
-					rerror(m, Enofid);
-					continue;
-				}
-				wlock(f);
-				clunkfid(m->conn, f, &a);
-				wunlock(f);
-				putfid(f);
-				freeamsg(a);
-			}
-			rerror(m, Erdonly);
-			continue;
- 		}
-
 		qlock(&fs->mutlk);
 		epochstart(id);
 		fs->snap.dirty = 1;
 		if(waserror())
 			rerror(m, "%s", errmsg());
 		else {
+			/*
+			 * even if we're readonly, we want to allow
+			 * mutation operations through, since we need
+			 * things like writes to go through to ctl
+			 * files, auth fids, etc. the check in upsert()
+			 * should prevent actual on-disk mutation.
+			 */
 			switch(m->type){
 			case Tcreate:	fscreate(m);		break;
 			case Twrite:	fswrite(m, id);		break;
@@ -2815,27 +2827,37 @@ freetree(Bptr rb, vlong pred)
  * need to hold the mutlk, other than when we free or kill
  * blocks via epochclean.
  */
-static void
+static Tree*
 sweeptree(Tree *t)
 {
 	char pfx[1];
+	vlong gen;
 	Scan s;
 	Bptr bp;
+
 	pfx[0] = Kdat;
 	btnewscan(&s, pfx, 1);
+	gen = (t->pred != -1) ? t->pred : t->base;
 	btenter(t, &s);
 	while(1){
 		if(!btnext(&s, &s.kv))
 			break;
 		bp = unpackbp(s.kv.v, s.kv.nv);
-		if(bp.gen > t->pred)
+		if(bp.gen > gen)
 			freebp(nil, bp);
 		qlock(&fs->mutlk);
 		qunlock(&fs->mutlk);
 		epochclean();
 	}
 	btexit(&s);
-	freetree(t->bp, t->pred);
+	freetree(t->bp, gen);
+
+	if(gen != -1 && (t = opentree(gen)) != nil){
+		if(t->nlbl == 0 && t->nref == 0)
+			return t;
+		closesnap(t);
+	}
+	return nil;
 }
 
 void
@@ -2888,10 +2910,10 @@ runsweep(int id, void*)
 	char buf[Kvmax];
 	Msg mb[Kvmax/Offksz];
 	Bptr bp, nb, *oldhd;
+	Tree *t, *n;
 	Fcall r;
-	int i, nm;
+	int i, nm, ok;
 	vlong off;
-	Tree *t;
 	Arena *a;
 	Amsg *am;
 	Blk *b;
@@ -3002,18 +3024,30 @@ Syncout:
 				qunlock(&fs->mutlk);
 				nexterror();
 			}
-			snapfs(am, &t);
+			t = snapfs(am);
 			epochend(id);
 			qunlock(&fs->mutlk);
 			poperror();
-			sync(id);	/* t leaked on error() */
 
-			if(t != nil){
-				for(i = 0; i < 3; i++)
-					while(!epochclean())
-						sleep(1);
-				sweeptree(t);	/* t leaked on error() */
+			while(t != nil){
+				sync(id);	/* t leaked on error() */
+				n = sweeptree(t);
 				closesnap(t);
+				if(n == nil)
+					break;
+				t = n;
+				ok = 0;
+				if(n->nref == 0 && n->nlbl == 0){
+					qlock(&fs->mutlk);
+					epochstart(id);
+					ok = delsnap(n, n->succ, nil);
+					epochend(id);
+					qunlock(&fs->mutlk);
+				}
+				if(!ok){
+					closesnap(n);
+					break;
+				}
 			}
 			break;
 

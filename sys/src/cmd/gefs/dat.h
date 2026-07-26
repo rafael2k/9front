@@ -150,6 +150,7 @@ enum {
 /* internal errors */
 //#define Efs	(abort(), "fs broke")
 extern char Efs[];
+extern char Enoval[];
 extern char Ecorrupt[];
 extern char Efsvers[];
 extern char Eimpl[];
@@ -191,9 +192,13 @@ extern char Ephase[];
 extern char Ecdir[];
 extern char Ebadctl[];
 extern char Enoqid[];
+extern char Echeck[];
+extern char Eopen[];
+extern char Eoffset[];
 
 extern char Esnapu[];
 extern char Esnapx[];
+extern char Esnapr[];
 
 extern char Ewstatt[];
 extern char Ewstatb[];
@@ -303,6 +308,7 @@ enum {
 	Owstat,		/* update kvp dirent */
 	Orelink,	/* rechain forwards */
 	Oreprev,	/* rechain backwards */
+	Oincref,	/* adjust refs on snap */
 	Nmsgtype,	/* maximum message type */
 };
 
@@ -466,8 +472,8 @@ struct Tree {
 	int	dirty;
 
 	/* on-disk */
-	int	nref;	/* number snapshots forked/after us */
-	int	nlbl;	/* number of labels referring to us */
+	int	nref;	/* number of forks */
+	int	nlbl;	/* number of labels */
 	int	ht;	/* height of the tree */
 	uint	flag;	/* flag set */
 	Bptr	bp;	/* block pointer of root */
@@ -718,11 +724,6 @@ struct Conn {
 struct Fid {
 	RWLock;
 	Fid	*next;
-	/*
-	 * if opened with OEXEC, we want to use a snapshot,
-	 * instead of the most recent root, to prevent
-	 * paging in the wrong executable.
-	 */
 	Mount	*mnt;
 	Scan	*scan;	/* in progres scan */
 	Dent	*dent;	/* (pqid, name) ref, modified on rename */
